@@ -43,6 +43,8 @@ test('Roles aplicados por servidor',async()=>{
 });
 let order;
 test('Precios del servidor, descuento y control de concurrencia',async()=>{
+ assert.equal((await post('orders',{items:[{product_id:product,quantity:1}]})).status,409);
+ assert.equal((await post('cash/open',{opening:10000})).status,200);
  const r=await post('orders',{table_id:table,items:[{product_id:product,quantity:2,price:1}],discount:100,guests:2});assert.equal(r.status,200);order=r.data;assert.equal(order.total,2400);
  assert.equal((await post('orders',{table_id:table,items:[{product_id:product,quantity:1}]})).status,409);
  assert.equal((await post('orders/'+order.id,{...order,version:0})).status,400);
@@ -51,11 +53,12 @@ test('Precios del servidor, descuento y control de concurrencia',async()=>{
  assert.equal((await post('tables/'+table,{name:'01',area:'Salón',capacity:4,active:false})).status,409);
 });
 test('Cobro exige caja y pagos exactos',async()=>{
+ assert.equal((await post('cash/close',{counted:10000})).status,200);
  assert.equal((await post('checkout/'+order.id,{version:order.version,payments:[{method:'efectivo',amount:2400}]})).status,409);
  assert.equal((await post('cash/open',{opening:10000})).status,200);
  assert.equal((await post('cash/open',{opening:0})).status,409);
  assert.equal((await post('checkout/'+order.id,{version:order.version,payments:[{method:'efectivo',amount:1}]})).status,400);
- assert.equal((await state()).data.products[0].stock,10);
+ assert.equal((await state()).data.products[0].stock,8);
 });
 let sale;
 test('Cobro atómico, pagos divididos, vuelto y repetición',async()=>{
@@ -68,8 +71,7 @@ test('Anulación repone existencias una sola vez y conserva historial',async()=>
  const s=(await state()).data;assert.equal(s.products[0].stock,10);assert.equal(s.shift.expected,10000);assert.equal(s.sales[0].status,'void');
 });
 test('Stock insuficiente revierte toda la operación',async()=>{
- const o=(await post('orders',{items:[{product_id:product,quantity:11}]})).data;
- assert.equal((await post('checkout/'+o.id,{version:o.version,payments:[{method:'tarjeta',amount:o.total}]})).status,409);const s=(await state()).data;assert.equal(s.products[0].stock,10);assert.equal(s.sales.length,1);assert.equal(s.orders[0].status,'open');
+ assert.equal((await post('orders',{items:[{product_id:product,quantity:11}]})).status,409);const s=(await state()).data;assert.equal(s.products[0].stock,10);assert.equal(s.sales.length,1);assert.equal(s.orders.length,0);
 });
 test('Compras, contactos y validación documental',async()=>{
  assert.equal((await post('contacts',{name:'Proveedor',document_type:'RUC',document:'12'})).status,400);
@@ -99,20 +101,20 @@ test('Suscripción no puede activarse desde la API del cliente',async()=>{
  app.store.db.prepare("UPDATE tenants SET expires_at='2099-01-01T00:00:00Z' WHERE id=?").run(tenantA);
 });
 test('Persistencia en disco y rutas privadas no expuestas',async()=>{
- const copy=openStore(dir);assert.equal(copy.tenant(tenantA).prepare('SELECT stock FROM products WHERE id=?').get(product).stock,15);copy.close();
+ const copy=openStore(dir);assert.equal(copy.tenant(tenantA).prepare('SELECT stock FROM products WHERE id=?').get(product).stock,14);copy.close();
  const res=await fetch(url+'/.data/registry.sqlite');assert.equal(res.status,404);
 });
 test('Las ediciones obsoletas de producto no deshacen compras ni cobros',async()=>{
+ assert.equal((await post('cash/open',{opening:0})).status,200);
  const original={name:'Producto con revisión',category:'Pruebas',price:100,cost:0,stock:3,track_stock:true,active:true};
  const created=await post('products',original);const pid=created.data.id;assert.equal(created.data.version,1);
  let o=(await post('orders',{items:[{product_id:pid,quantity:1}]})).data;
  assert.equal((await post('purchases',{product_id:pid,quantity:2,total:100})).status,200);
  assert.equal((await post('products/'+pid,{...original,version:1})).status,409);
- let current=(await state()).data.products.find(p=>p.id===pid);assert.equal(current.stock,5);assert.equal(current.version,2);
+ let current=(await state()).data.products.find(p=>p.id===pid);assert.equal(current.stock,4);assert.equal(current.version,3);
  assert.equal((await post('products/'+pid,{...current,name:'Nombre nuevo',price:900,track_stock:false})).status,200);
  o=(await post('orders/'+o.id,o)).data;
  assert.equal(o.items[0].price,100);assert.equal(o.items[0].name,original.name);assert.equal(o.items[0].track_stock,true);
- assert.equal((await post('cash/open',{opening:0})).status,200);
  const paid=await post('checkout/'+o.id,{version:o.version,payments:[{method:'tarjeta',amount:100}]});assert.equal(paid.status,200);
  current=(await state()).data.products.find(p=>p.id===pid);assert.equal(current.stock,4);assert.equal(current.version,4);
  assert.equal((await post('products/'+pid,{...current,version:3,stock:5})).status,409);
@@ -122,8 +124,7 @@ test('Las ediciones obsoletas de producto no deshacen compras ni cobros',async()
 test('Un fallo de stock revierte todos los descuentos y revisiones anteriores',async()=>{
  const first=(await post('products',{name:'A stock suficiente',category:'Pruebas',price:100,stock:5})).data.id;
  const second=(await post('products',{name:'B sin stock',category:'Pruebas',price:100,stock:0})).data.id;
- const o=(await post('orders',{items:[{product_id:first,quantity:1},{product_id:second,quantity:1}]})).data;
- assert.equal((await post('checkout/'+o.id,{version:o.version,payments:[{method:'tarjeta',amount:200}]})).status,409);
+ assert.equal((await post('orders',{items:[{product_id:first,quantity:1},{product_id:second,quantity:1}]})).status,409);
  const p=(await state()).data.products.find(p=>p.id===first);assert.equal(p.stock,5);assert.equal(p.version,1);
 });
 test('Un pedido con descuento del 100% puede cerrarse sin inventar un cobro',async()=>{

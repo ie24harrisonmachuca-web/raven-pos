@@ -11,13 +11,29 @@ function nextNumber(db,table){return one(db,`SELECT COALESCE(MAX(number),0)+1 n 
 function productVersion(db,id){return one(db,'SELECT version FROM product_revisions WHERE product_id=?',id)?.version??1;}
 function bumpProduct(db,id){run(db,'INSERT INTO product_revisions(product_id,version) VALUES(?,2) ON CONFLICT(product_id) DO UPDATE SET version=version+1',id);}
 function flag(value,defaultValue=1){if(value===undefined)return defaultValue;if(value===true||value===1)return 1;if(value===false||value===0)return 0;fail(400,'Estado de activación no válido.');}
+function canEditOrder(ctx,order){return permissions[ctx.role].includes('orders')&&(ctx.role!=='mesero'||order.created_by===ctx.user);}
+function presentOrder(ctx,row){return {...parseOrder(row),can_edit:canEditOrder(ctx,row),owner_name:one(ctx.store.db,'SELECT name FROM users WHERE id=?',row.created_by)?.name||'Usuario no disponible'};}
+// An absent reservation marks a legacy open order whose stock was not deducted.
+// Each change is reconciled inside the same transaction as the order and revisions.
+function reconcileStock(db,orderId,items){
+ const saved=one(db,'SELECT items FROM order_stock_reservations WHERE order_id=?',orderId);
+ const previous=new Map((saved?JSON.parse(saved.items):[]).map(i=>[i.product_id,i.quantity]));
+ const next=new Map(items.filter(i=>i.track_stock).map(i=>[i.product_id,i.quantity]));
+ for(const productId of new Set([...previous.keys(),...next.keys()])){
+  const delta=(next.get(productId)||0)-(previous.get(productId)||0);if(!delta)continue;
+  const product=record(db,'products',productId);if(delta>0&&product.stock<delta)fail(409,'Stock insuficiente: '+product.name);
+  run(db,'UPDATE products SET stock=stock-? WHERE id=?',delta,productId);bumpProduct(db,productId);
+ }
+ run(db,'INSERT INTO order_stock_reservations(order_id,items) VALUES(?,?) ON CONFLICT(order_id) DO UPDATE SET items=excluded.items',orderId,JSON.stringify([...next].map(([product_id,quantity])=>({product_id,quantity}))));
+}
 export function operate(ctx,method,path,b={}){
  const {db,user,store,tenant,role}=ctx;
  const get=method==='GET';const action=path.split('/')[0];const id=path.split('/')[1];
  if(get&&path==='state'){
  const can=p=>permissions[role].includes(p);
- const shift=can('cash')?one(db,"SELECT * FROM shifts WHERE status='open'"):null;
- return {tenant:{...tenant,...one(db,'SELECT * FROM settings WHERE id=1'),id:tenant.id},role,permissions:permissions[role],products:all(db,'SELECT p.*,COALESCE(r.version,1) version FROM products p LEFT JOIN product_revisions r ON r.product_id=p.id ORDER BY p.name').map(p=>can('products')?p:{...p,cost:undefined}),tables:all(db,'SELECT * FROM tables ORDER BY area,name'),contacts:role==='cocina'?[]:all(db,'SELECT * FROM contacts ORDER BY name'),orders:can('orders')||can('kitchen')?all(db,role==='cocina'?"SELECT * FROM orders WHERE status='open' AND kitchen!='draft' ORDER BY number":"SELECT * FROM orders WHERE status IN ('open','quote') ORDER BY number").map(parseOrder):[],sales:can('reports')?all(db,'SELECT s.*,o.items,o.discount,o.customer_id,o.table_id FROM sales s JOIN orders o ON o.id=s.order_id ORDER BY s.created_at DESC LIMIT 500').map(s=>({...s,items:JSON.parse(s.items),payments:JSON.parse(s.payments)})):[],purchases:can('purchases')?all(db,'SELECT * FROM purchases ORDER BY created_at DESC LIMIT 200'):[],shift:shift?{...shift,expected:expected(db,shift)}:null,shifts:can('cash')?all(db,'SELECT * FROM shifts ORDER BY opened_at DESC LIMIT 50'):[],movements:can('cash')?all(db,'SELECT * FROM movements ORDER BY created_at DESC LIMIT 200'):[],audit:role==='admin'?all(db,'SELECT * FROM audit ORDER BY created_at DESC LIMIT 100'):[],users:can('users')?all(store.db,'SELECT u.id,u.name,u.email,m.role FROM memberships m JOIN users u ON u.id=m.user_id WHERE tenant_id=?',tenant.id):[]};
+ const activeShift=one(db,"SELECT * FROM shifts WHERE status='open'");
+ const shift=can('cash')?activeShift:null;
+ return {tenant:{...tenant,...one(db,'SELECT * FROM settings WHERE id=1'),id:tenant.id},role,cash_open:!!activeShift,permissions:permissions[role],products:all(db,'SELECT p.*,COALESCE(r.version,1) version FROM products p LEFT JOIN product_revisions r ON r.product_id=p.id ORDER BY p.name').map(p=>can('products')?p:{...p,cost:undefined}),tables:all(db,'SELECT * FROM tables ORDER BY area,name'),contacts:role==='cocina'?[]:all(db,'SELECT * FROM contacts ORDER BY name'),orders:can('orders')||can('kitchen')?all(db,role==='cocina'?"SELECT * FROM orders WHERE status='open' AND kitchen!='draft' ORDER BY number":"SELECT * FROM orders WHERE status IN ('open','quote') ORDER BY number").map(row=>presentOrder(ctx,row)):[],sales:can('reports')?all(db,'SELECT s.*,o.items,o.discount,o.customer_id,o.table_id FROM sales s JOIN orders o ON o.id=s.order_id ORDER BY s.created_at DESC LIMIT 500').map(s=>({...s,items:JSON.parse(s.items),payments:JSON.parse(s.payments)})):[],purchases:can('purchases')?all(db,'SELECT * FROM purchases ORDER BY created_at DESC LIMIT 200'):[],shift:shift?{...shift,expected:expected(db,shift)}:null,shifts:can('cash')?all(db,'SELECT * FROM shifts ORDER BY opened_at DESC LIMIT 50'):[],movements:can('cash')?all(db,'SELECT * FROM movements ORDER BY created_at DESC LIMIT 200'):[],audit:role==='admin'?all(db,'SELECT * FROM audit ORDER BY created_at DESC LIMIT 100'):[],users:can('users')?all(store.db,'SELECT u.id,u.name,u.email,m.role FROM memberships m JOIN users u ON u.id=m.user_id WHERE tenant_id=?',tenant.id):[]};
  }
  if(get&&action==='receipt'){
  requireRole(ctx,'orders');const order=parseOrder(record(db,'orders',id));if(!['open','quote'].includes(order.status)&&!permissions[role].includes('reports'))fail(403,'Tu rol solo permite consultar precuentas de pedidos abiertos.');const sale=one(db,'SELECT * FROM sales WHERE order_id=?',id);return {settings:one(db,'SELECT * FROM settings WHERE id=1'),order,sale:sale?{...sale,payments:JSON.parse(sale.payments)}:null,customer:order.customer_id?record(db,'contacts',order.customer_id):null};
@@ -48,8 +64,8 @@ export function operate(ctx,method,path,b={}){
    run(db,'INSERT INTO contacts VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,type=excluded.type,document_type=excluded.document_type,document=excluded.document,address=excluded.address,email=excluded.email,phone=excluded.phone',cid,text(b.name),type,docType,doc,text(b.address??'',250,false),text(b.email??'',180,false),text(b.phone??'',30,false));audit(db,user,'contact.save',cid);return{id:cid};
   }
   if(action==='orders'){
-   const old=id?record(db,'orders',id):null;if(old&&!['open','quote'].includes(old.status))fail(409,'Este pedido ya está cerrado.');if(old&&integer(b.version,1)!==old.version)fail(409,'Otro usuario modificó el pedido. Recarga antes de guardar.');
-   if(b.cancel===true){if(!old)fail(400,'Pedido requerido.');const reason=text(b.reason,500);run(db,"UPDATE orders SET status='cancelled',version=version+1,updated_at=? WHERE id=?",now(),id);audit(db,user,'order.cancel',id,reason);return{id};}
+   openShift(db);const old=id?record(db,'orders',id):null;if(old&&!canEditOrder(ctx,old))fail(403,'Este pedido pertenece a otro mozo. Solo su creador, caja o administración pueden modificarlo.');if(old&&!['open','quote'].includes(old.status))fail(409,'Este pedido ya está cerrado.');if(old&&integer(b.version,1)!==old.version)fail(409,'Otro usuario modificó el pedido. Recarga antes de guardar.');
+   if(b.cancel===true){if(!old)fail(400,'Pedido requerido.');const reason=text(b.reason,500);reconcileStock(db,id,[]);run(db,"UPDATE orders SET status='cancelled',version=version+1,updated_at=? WHERE id=?",now(),id);audit(db,user,'order.cancel',id,reason);return{id};}
    const status=b.status==='quote'?'quote':'open';let tableId=b.table_id||null;
    if(tableId){if(!record(db,'tables',tableId).active)fail(409,'La mesa está desactivada.');if(status==='quote')fail(400,'Una cotización no ocupa mesa.');if(one(db,"SELECT id FROM orders WHERE table_id=? AND status='open' AND id!=?",tableId,id||''))fail(409,'La mesa ya tiene un pedido abierto.');}
    if(b.customer_id&&record(db,'contacts',b.customer_id).type==='proveedor')fail(400,'Selecciona un contacto de tipo cliente.');
@@ -60,7 +76,7 @@ export function operate(ctx,method,path,b={}){
    const oid=id||uid(),time=now();const notes=text(b.notes??'',1000,false);const guests=integer(b.guests??1,1,100);const kitchen=status==='quote'?'draft':b.send_kitchen?'received':old?.kitchen||'draft';
    if(old)run(db,'UPDATE orders SET table_id=?,customer_id=?,status=?,items=?,total=?,discount=?,notes=?,guests=?,version=version+1,kitchen=?,updated_at=? WHERE id=?',tableId,b.customer_id||null,status,JSON.stringify(items),subtotal-discount,discount,notes,guests,kitchen,time,oid);
    else run(db,'INSERT INTO orders VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',oid,nextNumber(db,'orders'),tableId,b.customer_id||null,status,JSON.stringify(items),subtotal-discount,discount,notes,guests,1,kitchen,user,time,time);
-   audit(db,user,'order.save',oid);return parseOrder(record(db,'orders',oid));
+   reconcileStock(db,oid,status==='open'?items:[]);audit(db,user,'order.save',oid);return presentOrder(ctx,record(db,'orders',oid));
   }
   if(action==='kitchen'){
    const o=record(db,'orders',id);if(o.status!=='open'||o.kitchen==='draft')fail(409,'Pedido no disponible en cocina.');if(integer(b.version,1)!==o.version)fail(409,'El pedido cambió. Actualiza la vista.');const transitions={received:'preparing',preparing:'ready',ready:'served'};if(transitions[o.kitchen]!==b.status)fail(409,'Transición de cocina no válida.');run(db,'UPDATE orders SET kitchen=?,version=version+1,updated_at=? WHERE id=?',b.status,now(),id);audit(db,user,'kitchen.'+b.status,id);return{id};
@@ -70,7 +86,7 @@ export function operate(ctx,method,path,b={}){
    const tip=integer(b.tip??0,0,10000000);const due=o.total+tip;if(!Array.isArray(b.payments)||!b.payments.length||b.payments.length>10)fail(400,'Registra al menos un pago.');
    const payments=b.payments.map(p=>{if(!p||typeof p!=='object'||Array.isArray(p))fail(400,'Pago no válido.');if(!['efectivo','tarjeta','yape','plin','transferencia'].includes(p.method))fail(400,'Medio de pago no válido.');const amount=integer(p.amount,due===0?0:1);const received=integer(p.received??amount,amount);if(p.method!=='efectivo'&&received!==amount)fail(400,'El vuelto solo corresponde a efectivo.');if(due===0&&(received!==0||b.payments.length!==1))fail(400,'Para un pedido gratuito registra un único pago de importe cero.');return{method:p.method,amount,received,change:received-amount};});
    if(payments.reduce((s,p)=>s+p.amount,0)!==due)fail(400,'La suma de los pagos debe coincidir con el total más la propina.');
-   for(const line of JSON.parse(o.items)){if(line.track_stock){const p=record(db,'products',line.product_id);if(p.stock<line.quantity)fail(409,'Stock insuficiente: '+p.name);run(db,'UPDATE products SET stock=stock-? WHERE id=?',line.quantity,p.id);bumpProduct(db,p.id);}}
+   reconcileStock(db,id,JSON.parse(o.items));
    const sid=uid(),time=now();run(db,'INSERT INTO sales VALUES(?,?,?,?,?,?,?,?,?,?,?)',sid,nextNumber(db,'sales'),id,shift.id,o.total,tip,JSON.stringify(payments),'paid',user,time,null);
    run(db,"UPDATE orders SET status='paid',version=version+1,updated_at=? WHERE id=?",time,id);
    const cash=payments.filter(p=>p.method==='efectivo').reduce((s,p)=>s+p.amount,0);if(cash)run(db,'INSERT INTO movements VALUES(?,?,?,?,?,?,?)',uid(),shift.id,cash,'Venta interna '+o.number,'sale:'+sid,user,time);
@@ -80,6 +96,7 @@ export function operate(ctx,method,path,b={}){
    const sale=record(db,'sales',id);if(sale.status!=='paid')fail(409,'La venta ya está anulada.');const reason=text(b.reason,500);const shift=openShift(db);if(shift.id!==sale.shift_id)fail(409,'La venta pertenece a una caja cerrada. Requiere un proceso de devolución posterior.');const order=record(db,'orders',sale.order_id);
    const cash=JSON.parse(sale.payments).filter(p=>p.method==='efectivo').reduce((s,p)=>s+p.amount,0);if(expected(db,shift)<cash)fail(409,'El saldo de caja no alcanza para devolver el efectivo. Registra primero el ingreso correspondiente.');
    for(const line of JSON.parse(order.items))if(line.track_stock){run(db,'UPDATE products SET stock=stock+? WHERE id=?',line.quantity,line.product_id);bumpProduct(db,line.product_id);}
+   run(db,'INSERT INTO order_stock_reservations(order_id,items) VALUES(?,?) ON CONFLICT(order_id) DO UPDATE SET items=excluded.items',sale.order_id,'[]');
    if(cash)run(db,'INSERT INTO movements VALUES(?,?,?,?,?,?,?)',uid(),shift.id,-cash,'Anulación: '+reason,'void:'+id,user,now());
    run(db,"UPDATE sales SET status='void',void_reason=? WHERE id=?",reason,id);run(db,"UPDATE orders SET status='void',version=version+1,updated_at=? WHERE id=?",now(),sale.order_id);audit(db,user,'sale.void',id,reason);return{id};
   }

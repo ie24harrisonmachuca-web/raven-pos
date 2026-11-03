@@ -40,12 +40,12 @@ Si ya hay usuarios, `setup` no reemplaza datos ni contraseñas. Los nombres de l
 4. Guardar el pedido y enviarlo a cocina cuando corresponda.
 5. Actualizar la comanda por los estados recibido, preparando, listo y entregado.
 6. Registrar el pago recibido, incluido pago dividido y vuelto de efectivo. El total se valida en el servidor.
-7. Consultar o imprimir el ticket interno. El cobro libera la mesa, descuenta existencias y registra el efectivo en caja.
+7. Consultar o imprimir el ticket interno. El cobro libera la mesa y registra el efectivo en caja; las existencias ya se descontaron al guardar el pedido.
 8. Registrar entradas y salidas manuales y cerrar caja con el efectivo contado.
 
 También se incluyen catálogo, control básico de existencias, recepción de compras, clientes y proveedores, cotizaciones convertibles a pedidos, resumen de ventas, exportación CSV, creación de integrantes, auditoría e identidad del negocio. El nombre y el logo se configuran por empresa; admite PNG, JPEG o WebP de hasta 2 MB.
 
-Los pedidos controlan su versión para detectar cambios hechos desde otro equipo. Una mesa tiene como máximo un pedido abierto. El servidor calcula los precios, verifica el stock al cobrar y rechaza un segundo cobro del mismo pedido. La anulación conserva el historial y repone existencias; en esta versión solo se permite si la caja original sigue abierta.
+Los pedidos controlan su versión para detectar cambios hechos desde otro equipo. Una mesa tiene como máximo un pedido abierto. El servidor calcula los precios, verifica y descuenta el stock al guardar el pedido y rechaza un segundo cobro del mismo pedido. La anulación conserva el historial y repone existencias; en esta versión solo se permite si la caja original sigue abierta.
 
 ## Datos independientes por empresa
 
@@ -210,3 +210,14 @@ Los scripts operativos se comprobaron también en datos temporales: creación, a
 ## Recursos
 
 La marca utiliza el cuervo aportado por el propietario. Manrope se sirve localmente; su licencia está en `public/assets/Manrope-OFL.txt`. Las fotografías de productos se heredaron de la web comercial como recursos ilustrativos; no representan inventario o productos reales de un negocio. Esta aplicación no utiliza el logotipo ni los recursos de marca de SUSII.
+
+## Reglas de caja, responsabilidad y stock
+
+- El servidor exige caja abierta para crear, editar o cancelar pedidos y cotizaciones. La configuración inicial y el catálogo se pueden preparar antes de abrir caja.
+- El primer usuario que guarda el pedido de una mesa conserva su responsabilidad. Otro mesero puede consultarlo pero no modificarlo ni cancelarlo. Cajero y administrador pueden editar cualquier pedido, sin reasignar silenciosamente su creador.
+- Guardar un pedido abierto descuenta las unidades controladas. Editar aplica solo las diferencias; quitar productos, reducir cantidades o cancelar devuelve unidades. Cobrar no descuenta dos veces; anular devuelve el stock una sola vez.
+- Las cotizaciones no reservan stock; convertirlas en pedido sí lo hace. Los pedidos abiertos anteriores a esta actualización reservan al siguiente guardado o cobro. La migración no altera automáticamente los saldos existentes.
+- Los permisos y el stock se validan en transacciones del servidor. La interfaz informa responsable y consulta los cambios de otras sesiones cada tres segundos mientras está visible, sin reemplazar cambios sin guardar. Una edición que quedó obsoleta necesita actualizarse antes de guardarse.
+- `public/daylight.css` y `public/order-rules.css` añaden el modo claro crema/ámbar, cristal y cintas de luz originales inspiradas en las referencias. Los movimientos se detienen con la preferencia de movimiento reducido.
+
+Verificación de esta actualización: 33 pruebas de backend aprobadas. Tres sesiones reales del navegador demostraron caja cerrada bloqueada, propiedad del primer mesero, consulta bloqueada para el segundo, edición de administrador y stock actualizado entre sesiones. Pantallas de mesas y pedido revisadas a 375 y 1440 px sin desbordamiento ni infracciones de axe detectadas en el tema claro. El POS permanece local y separado de la web comercial.
