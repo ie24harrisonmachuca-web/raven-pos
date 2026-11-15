@@ -1,17 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
-export const uid=()=>randomUUID();
-export const now=()=>new Date().toISOString();
-export const digest=s=>createHash('sha256').update(s).digest('hex');
-export function hashPassword(password){const salt=randomBytes(16).toString('hex');return salt+':'+scryptSync(password,salt,64).toString('hex');}
-const dummy=hashPassword('not-a-real-account-password');
-export function verifyPassword(password,hash=dummy){const [salt,key]=hash.split(':');const expected=Buffer.from(key||'','hex');const actual=scryptSync(password,salt,64);return expected.length===actual.length&&timingSafeEqual(actual,expected);}
-export function fail(status,message){throw Object.assign(new Error(message),{status});}
-export function text(v,max=150,required=true){if(typeof v!=='string'||v.trim().length>max||(required&&!v.trim()))fail(400,'Revisa los campos obligatorios y su longitud.');return v.trim();}
-export function integer(v,min=0,max=100000000){if(!Number.isSafeInteger(v)||v<min||v>max)fail(400,'Cantidad o importe no válido.');return v;}
-export function transaction(db,fn){db.exec('BEGIN IMMEDIATE');try{const out=fn();db.exec('COMMIT');return out;}catch(e){db.exec('ROLLBACK');throw e;}}
+import {uid,hashPassword,fail,text} from './domain.mjs';
+export * from './domain.mjs';
 export function openStore(directory){
  const root=resolve(directory);mkdirSync(join(root,'tenants'),{recursive:true});
  const db=new DatabaseSync(join(root,'registry.sqlite'));db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
@@ -42,5 +33,3 @@ export function openStore(directory){
  function createTenant(slug,name,expiresAt,status='active'){if(typeof slug!=='string'||!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)||slug.length>60)fail(400,'Identificador de empresa no válido.');if(!['active','suspended'].includes(status)||!Number.isFinite(Date.parse(expiresAt)))fail(400,'Estado o fecha de suscripción no válidos.');const id=uid();db.prepare('INSERT INTO tenants VALUES(?,?,?,?,?)').run(id,slug,text(name),status,new Date(expiresAt).toISOString());tenant(id);return id;}
  return {root,db,tenant,createUser,createTenant,close(){for(const d of cache.values())d.close();db.close();}};
 }
-export function audit(db,user,action,id,detail=''){db.prepare('INSERT INTO audit VALUES(?,?,?,?,?,?)').run(uid(),user,action,id,text(detail,2000,false),now());}
-export const permissions={admin:['read','orders','checkout','products','tables','contacts','purchases','cash','reports','settings','users','kitchen','void'],cajero:['read','orders','checkout','contacts','cash','reports'],mesero:['read','orders','contacts'],cocina:['read','kitchen'],almacen:['read','products','purchases','contacts']};

@@ -1,4 +1,4 @@
-import {uid,now,fail,text,integer,transaction,audit,permissions} from './store.mjs';
+import {uid,now,fail,text,integer,transaction,audit,permissions} from './domain.mjs';
 const one=(db,sql,...p)=>db.prepare(sql).get(...p);
 const all=(db,sql,...p)=>db.prepare(sql).all(...p);
 const run=(db,sql,...p)=>db.prepare(sql).run(...p);
@@ -15,9 +15,9 @@ function canEditOrder(ctx,order){return permissions[ctx.role].includes('orders')
 function presentOrder(ctx,row){return {...parseOrder(row),can_edit:canEditOrder(ctx,row),owner_name:one(ctx.store.db,'SELECT name FROM users WHERE id=?',row.created_by)?.name||'Usuario no disponible'};}
 // An absent reservation marks a legacy open order whose stock was not deducted.
 // Each change is reconciled inside the same transaction as the order and revisions.
-function reconcileStock(db,orderId,items){
+function reconcileStock(db,orderId,items,legacyItems=[]){
  const saved=one(db,'SELECT items FROM order_stock_reservations WHERE order_id=?',orderId);
- const previous=new Map((saved?JSON.parse(saved.items):[]).map(i=>[i.product_id,i.quantity]));
+ const previous=new Map((saved?JSON.parse(saved.items):legacyItems.filter(i=>i.track_stock)).map(i=>[i.product_id,i.quantity]));
  const next=new Map(items.filter(i=>i.track_stock).map(i=>[i.product_id,i.quantity]));
  for(const productId of new Set([...previous.keys(),...next.keys()])){
   const delta=(next.get(productId)||0)-(previous.get(productId)||0);if(!delta)continue;
@@ -39,7 +39,7 @@ export function operate(ctx,method,path,b={}){
  requireRole(ctx,'orders');const order=parseOrder(record(db,'orders',id));if(!['open','quote'].includes(order.status)&&!permissions[role].includes('reports'))fail(403,'Tu rol solo permite consultar precuentas de pedidos abiertos.');const sale=one(db,'SELECT * FROM sales WHERE order_id=?',id);return {settings:one(db,'SELECT * FROM settings WHERE id=1'),order,sale:sale?{...sale,payments:JSON.parse(sale.payments)}:null,customer:order.customer_id?record(db,'contacts',order.customer_id):null};
  }
  if(method!=='POST')fail(404,'Operación no encontrada.');
- const permission={products:'products',tables:'tables',contacts:'contacts',orders:'orders',checkout:'checkout',void:'void',cash:'cash',purchases:'purchases',settings:'settings',users:'users',kitchen:'kitchen'}[action];
+ const permission={products:'products',tables:'tables',contacts:'contacts',orders:'orders',checkout:'checkout',correction:'checkout',void:'void',cash:'cash',purchases:'purchases',settings:'settings',users:'users',kitchen:'kitchen'}[action];
  if(!permission)fail(404,'Operación no encontrada.');requireRole(ctx,permission);
  if(action==='users'){
    const targetRole=text(b.role);if(!Object.hasOwn(permissions,targetRole))fail(400,'Rol no válido.');
@@ -91,6 +91,37 @@ export function operate(ctx,method,path,b={}){
    run(db,"UPDATE orders SET status='paid',version=version+1,updated_at=? WHERE id=?",time,id);
    const cash=payments.filter(p=>p.method==='efectivo').reduce((s,p)=>s+p.amount,0);if(cash)run(db,'INSERT INTO movements VALUES(?,?,?,?,?,?,?)',uid(),shift.id,cash,'Venta interna '+o.number,'sale:'+sid,user,time);
    audit(db,user,'sale.create',sid);return{id:sid,order_id:id};
+  }
+  if(action==='correction'){
+   const sale=record(db,'sales',id),order=record(db,'orders',sale.order_id);
+   if(sale.status!=='paid'||order.status!=='paid')fail(409,'Solo se puede corregir una venta pagada.');
+   if(integer(b.version,1)!==order.version)fail(409,'La venta cambió. Abre de nuevo la corrección.');
+   const shift=openShift(db);
+   if(shift.id!==sale.shift_id)fail(409,'La venta pertenece a una caja cerrada.');
+   const reason=text(b.reason,500),previous=JSON.parse(order.items),originalPayments=JSON.parse(sale.payments);
+   if(!Array.isArray(b.quantities)||b.quantities.length!==previous.length)fail(400,'Revisa las cantidades de la venta.');
+   const items=previous.map((line,index)=>({...line,quantity:integer(b.quantities[index],0,line.quantity)})).filter(line=>line.quantity>0);
+   if(!items.length)fail(400,'Para retirar todos los productos, usa la anulación de la venta.');
+   if(items.length===previous.length&&items.every((line,index)=>line.quantity===previous[index].quantity))fail(400,'Reduce al menos una cantidad.');
+   const subtotal=items.reduce((sum,line)=>sum+line.price*line.quantity,0);
+   const discount=Math.min(order.discount,subtotal),total=subtotal-discount,refund=sale.total-total;
+   if(!Array.isArray(b.refunds)||b.refunds.length!==originalPayments.length)fail(400,'Indica la devolución por cada pago original.');
+   const refunds=b.refunds.map((amount,index)=>integer(amount,0,originalPayments[index].amount));
+   if(refunds.reduce((sum,amount)=>sum+amount,0)!==refund)fail(400,'Las devoluciones deben sumar exactamente la diferencia de la venta.');
+   const cashRefund=refunds.reduce((sum,amount,index)=>sum+(originalPayments[index].method==='efectivo'?amount:0),0);
+   if(cashRefund>0&&expected(db,shift)<cashRefund)fail(409,'El efectivo de caja no alcanza para esta devolución.');
+   const payments=originalPayments.map((payment,index)=>{
+    if(!refunds[index])return payment;
+    const amount=payment.amount-refunds[index];
+    return {...payment,amount,received:amount,change:0};
+   }).filter(payment=>payment.amount>0);
+   const time=now();
+   reconcileStock(db,order.id,items,previous);
+   run(db,'UPDATE orders SET items=?,total=?,discount=?,version=version+1,updated_at=? WHERE id=?',JSON.stringify(items),total,discount,time,order.id);
+   run(db,'UPDATE sales SET total=?,payments=? WHERE id=?',total,JSON.stringify(payments),id);
+   if(cashRefund)run(db,'INSERT INTO movements VALUES(?,?,?,?,?,?,?)',uid(),shift.id,-cashRefund,'Corrección de venta '+sale.number,'correction:'+id,user,time);
+   audit(db,user,'sale.correct',id,JSON.stringify({reason,previous_total:sale.total,total,refunds}));
+   return{id,order_id:order.id,total,refund};
   }
   if(action==='void'){
    const sale=record(db,'sales',id);if(sale.status!=='paid')fail(409,'La venta ya está anulada.');const reason=text(b.reason,500);const shift=openShift(db);if(shift.id!==sale.shift_id)fail(409,'La venta pertenece a una caja cerrada. Requiere un proceso de devolución posterior.');const order=record(db,'orders',sale.order_id);

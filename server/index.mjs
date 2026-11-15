@@ -37,7 +37,7 @@ export function createApp({dataDir=join(root,'.data'),origin='http://127.0.0.1:4
     }
     if(!['GET','HEAD'].includes(req.method))fail(405,'Método no permitido.');
     const filePath=path==='/'?join(publicRoot,'index.html'):resolve(publicRoot,'.'+decodeURIComponent(path));if(!filePath.startsWith(publicRoot+sep))fail(404,'Recurso no encontrado.');
-    const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.woff2':'font/woff2','.svg':'image/svg+xml'}[extname(filePath)];if(!mime)fail(404,'Recurso no encontrado.');let content;try{content=await readFile(filePath);}catch{fail(404,'Recurso no encontrado.');}res.writeHead(200,{'Content-Type':mime,'Cache-Control':'no-cache'});res.end(req.method==='HEAD'?undefined:content);
+    const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.woff2':'font/woff2','.ttf':'font/ttf','.svg':'image/svg+xml'}[extname(filePath)];if(!mime)fail(404,'Recurso no encontrado.');let content;try{content=await readFile(filePath);}catch{fail(404,'Recurso no encontrado.');}res.writeHead(200,{'Content-Type':mime,'Cache-Control':'no-cache'});res.end(req.method==='HEAD'?undefined:content);
    }catch(error){const status=error.status||500;if(!error.status)console.error('Request failed:',error.code||error.message);json(res,status,{error:status===500?'No se pudo completar la operación. Actualiza la vista y verifica su estado antes de reintentar.':error.message});}
  });server.requestTimeout=15000;server.headersTimeout=10000;return {server,store};
 }

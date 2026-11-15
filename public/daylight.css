@@ -222,32 +222,15 @@ html[data-theme="light"] {
   0%, 100% { transform: translate3d(-2%, -1%, 0) scale(1); }
   50% { transform: translate3d(3%, 2%, 0) scale(1.06); }
 }
-@media (prefers-reduced-motion: no-preference) {
+
   [data-theme="light"] .ambient::before { animation: raven-daylight-drift 26s ease-in-out infinite; }
-}
+
 @media (max-width: 700px) {
   [data-theme="light"] .ambient::before { filter: blur(24px); }
   [data-theme="light"] .sidebar { background: rgba(255, 251, 244, .91); }
 }
-@media (prefers-reduced-motion: reduce) {
-  [data-theme="light"] .ambient::before { animation: none; transform: none; }
-}
-@media (prefers-reduced-transparency: reduce) {
-  [data-theme="light"] .ambient::before { display: none; }
-  [data-theme="light"] .glass,
-  [data-theme="light"] .panel,
-  [data-theme="light"] .sidebar,
-  [data-theme="light"] .topbar,
-  [data-theme="light"] .sales-tabs,
-  [data-theme="light"] .salon-filters,
-  [data-theme="light"] .salon-bottom,
-  [data-theme="light"] .editor-tabs,
-  [data-theme="light"] .order-panel {
-    background: var(--solid);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-}
+
+
 @media print {
   [data-theme="light"] .ambient { display: none; }
   [data-theme="light"] dialog { background: #fff; box-shadow: none; }

@@ -125,3 +125,32 @@ test('La reserva afecta solo al inventario de su empresa',()=>fixture(async f=>{
  await f.post('waiter1','orders',{items:[f.line(2)]});const otherState=(await f.api('other','t/restaurant-b/state')).data;assert.equal(otherState.products.find(p=>p.id===otherProduct).stock,20);assert.equal(otherState.orders.length,0);assert.equal((await f.stock()).stock,8);
  assert.equal((await f.api('other','t/restaurant-b/orders','POST',{items:[f.line(1)]})).status,409);
 }));
+
+
+test('Corregir una venta mixta repone stock legado una sola vez y conserva la caja',()=>fixture(async f=>{
+ await f.open();
+ const other=(await f.post('admin','products',{name:'Gaseosa',category:'Bebidas',price:50,stock:10})).data.id;
+ f.db.prepare('UPDATE products SET stock=3 WHERE id=?').run(f.product);
+ const order=(await f.post('waiter1','orders',{table_id:f.table,items:[f.line(2),{product_id:other,quantity:1}],send_kitchen:true})).data;
+ assert.equal(order.kitchen,'received');
+ const sale=await f.post('cashier','checkout/'+order.id,{version:order.version,payments:[{method:'efectivo',amount:100},{method:'yape',amount:150}]});
+ assert.equal(sale.status,200);
+ assert.equal((await f.stock()).stock,1);
+ f.db.prepare('DELETE FROM order_stock_reservations WHERE order_id=?').run(order.id);
+ const path='correction/'+sale.data.id;
+ const correction={version:order.version+1,reason:'Se registró un plato de más',quantities:[1,1],refunds:[50,50]};
+ assert.equal((await f.post('waiter1',path,correction)).status,403);
+ assert.equal((await f.post('cashier',path,{...correction,refunds:[0,50]})).status,400);
+ assert.equal((await f.stock()).stock,1);
+ const results=await Promise.all([f.post('cashier',path,correction),f.post('admin',path,correction)]);
+ assert.deepEqual(results.map(result=>result.status).sort(),[200,409]);
+ assert.equal((await f.stock()).stock,2);
+ const state=(await f.state('admin')).data;
+ assert.equal(state.shift.expected,50);
+ assert.equal(state.sales[0].total,150);
+ assert.deepEqual(state.sales[0].payments.map(p=>p.amount),[50,100]);
+ assert.equal(state.sales[0].items[0].quantity,1);
+ assert.equal(state.audit.filter(entry=>entry.action==='sale.correct').length,1);
+ assert.equal((await f.post('cashier','cash/close',{counted:50})).status,200);
+ assert.equal((await f.post('cashier',path,{...correction,version:order.version+2})).status,409);
+}));

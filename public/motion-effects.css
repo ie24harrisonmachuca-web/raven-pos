@@ -1,0 +1,18 @@
+/* Motion is enabled throughout the workspace. */
+.login-navigation{flex-wrap:wrap}
+html[data-motion="full"] .raven-ribbon::before{animation:raven-ribbon-pos 23s ease-in-out infinite alternate!important}
+html[data-motion="full"] .raven-ribbon::after{animation:raven-ribbon-mask 23s ease-in-out infinite alternate!important}
+html[data-motion="full"][data-theme="light"] .ambient::before{animation:raven-daylight-drift 26s ease-in-out infinite!important}
+html[data-motion="full"] .btn,html[data-motion="full"] .icon-btn{transition:background .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s ease!important}
+html[data-motion="full"] .table-card,html[data-motion="full"] .company-card,html[data-motion="full"] .product-card{transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease!important}
+html[data-motion="full"] .pos-view-enter{animation:raven-view-enter .32s ease-out both!important}
+html[data-motion="full"] dialog[open]{animation:raven-dialog-enter .23s ease-out both!important}
+html[data-motion="full"] dialog[open]::backdrop{animation:raven-backdrop-enter .23s ease-out both!important}
+@keyframes raven-view-enter{from{opacity:.65;transform:translateY(9px)}to{opacity:1;transform:none}}
+@keyframes raven-dialog-enter{from{opacity:.5;transform:translateY(9px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes raven-backdrop-enter{from{opacity:0}to{opacity:1}}
+@media(max-width:700px){
+ .login-navigation .theme-select select{max-width:100px}
+ .login-form-wrap{padding-top:110px}
+}
+@media print{html[data-motion] *,html[data-motion] *::before,html[data-motion] *::after{animation:none!important;transition:none!important}}

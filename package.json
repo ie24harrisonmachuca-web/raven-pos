@@ -1,1 +1,29 @@
-{"name":"raven-pos-sistema","version":"0.1.0","private":true,"type":"module","engines":{"node":">=24.14"},"scripts":{"start":"node server/index.mjs","setup":"node scripts/setup.mjs","test":"node --test tests/*.test.mjs","backup":"node scripts/backup.mjs"}}
+{
+  "name": "raven-pos-sistema",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.14"
+  },
+  "scripts": {
+    "start": "node server/index.mjs",
+    "setup": "node scripts/setup.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "backup": "node scripts/backup.mjs",
+    "cloud:dev": "wrangler dev --local --port 8787",
+    "cloud:check": "wrangler deploy --dry-run --outdir .cloud/build",
+    "cloud:deploy": "node scripts/deploy-cloud.mjs",
+    "cloud:admin": "node scripts/cloud-admin.mjs",
+    "cloud:export": "node scripts/export-cloud.mjs",
+    "cloud:import": "node scripts/import-cloud.mjs",
+    "cloud:test": "node tests/cloud.integration.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.157.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261103.1": true
+  }
+}

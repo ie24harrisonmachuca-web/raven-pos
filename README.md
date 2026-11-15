@@ -1,6 +1,8 @@
 # Raven POS · Sistema independiente
 
-Aplicación web local para evaluar la operación de un POS con la identidad de Raven. Está separada de la web comercial: tiene su propio servidor, acceso, archivos y bases de datos. La instalación de esta carpeta **no está hospedada en Internet ni conectada al botón de acceso de la web comercial**.
+La adaptación para Cloudflare Workers y bases SQLite independientes por empresa está preparada y probada. La guía de publicación, migración y copias está en [cloud/README.md](cloud/README.md). La publicación real requiere autorizar la cuenta de alojamiento; el desarrollo local sigue disponible.
+
+Aplicación web local para evaluar la operación de un POS con la identidad de Raven. Conserva su propio servidor, acceso, archivos y bases de datos. La web comercial ya utiliza este cliente para el acceso local y la demostración; **el backend operativo y sus bases todavía no están hospedados en Internet**.
 
 La estructura de trabajo toma como referencia las capturas de SUSII aportadas por el propietario. Esta implementación es propia y todavía no ofrece todas las funciones de ese servicio. Es una versión de evaluación con operaciones persistentes; necesita completar el despliegue, las integraciones y las comprobaciones operativas antes de utilizarse con clientes de pago.
 
@@ -31,6 +33,16 @@ Si PowerShell impide ejecutar scripts, utiliza los dos comandos npm anteriores. 
 - El archivo privado `.data/ACCESO-LOCAL.txt` con la contraseña y la URL local. La contraseña no se muestra en la consola.
 
 Si ya hay usuarios, `setup` no reemplaza datos ni contraseñas. Los nombres de los negocios y las fotografías sirven para evaluar el sistema; esta instalación no contiene la actividad del POS de SUSII.
+
+## Integración con la web comercial
+
+Mantén `npm start` ejecutándose en esta carpeta. En otra consola, abre `C:\Users\Harrison ML\Downloads\Reven pos`, ejecuta `npm run build` y después `npm start`. Entra en `http://127.0.0.1:4173/acceso/` con las credenciales existentes del POS. La web sirve el cliente público y reenvía `/pos/api/` a `/api/` del servidor local en 4180, conservando cookie y CSRF; el proxy valida el origen de la web antes de enviar el origen esperado por el backend. No necesitas cambiar el `PUBLIC_ORIGIN` predeterminado del POS para este proxy.
+
+El build comercial ejecuta `scripts/sync-pos.mjs` para actualizar `public/pos/` con esta interfaz, estilos y recursos públicos. No copia `.data`, usuarios, sesiones, contraseñas ni código del servidor. La ruta de acceso usa la autenticación y los controles de suscripción reales, sin registro público automático.
+
+La demostración `?demo=1` reutiliza las mismas pantallas con `public/demo-api.js`: datos ficticios en memoria por instancia de la pestaña, sin credenciales ni peticiones a la API. Recargar o «Reiniciar demostración» elimina esos cambios. El flujo simula apertura de caja, pedidos, stock, cocina, pagos y reportes; no modifica la instalación operativa.
+
+Sites publica actualmente solo la web estática y la demo. Allí el acceso informa que el servidor está pendiente de conexión. Para ofrecer el POS por Internet todavía falta alojar su backend y almacenamiento persistente; después se podrá configurar una URL HTTPS en `loginUrl` de la web comercial. Esa configuración no sustituye la autorización del servidor.
 
 ## Flujo disponible
 
@@ -183,21 +195,27 @@ El servidor incorpora cookies HttpOnly, SameSite y controles CSRF/origen; las co
 - Los pedidos y las comandas se actualizan al consultar el servidor; no hay garantía de trabajo sin conexión ni sincronización entre locales desconectados.
 - La vista de ventas y sus resúmenes usan hasta las 500 ventas recientes; compras, movimientos, cierres y auditoría también tienen límites de consulta. No constituyen un libro contable completo ni una exportación fiscal.
 - Las cotizaciones se guardan y se convierten a pedidos. Todavía faltan flujos avanzados como división por comensal, devolución después del cierre, edición fiscal y todas las opciones presentes en SUSII.
-- La creación inicial de empresas y la renovación se realizan en la CLI. No hay cobro de suscripciones, alta pública automática ni portal comercial integrado.
+- La creación inicial de empresas y la renovación se realizan en la CLI. El acceso comercial local está integrado; no hay cobro de suscripciones ni alta pública automática.
 
 ## Hosting gratuito y publicación posterior
 
 Actualmente puedes probarlo sin coste de hosting en tu equipo. Para ofrecerlo por Internet se necesita un alojamiento persistente compatible con este backend.
 
-Cloudflare ofrece Durable Objects con almacenamiento SQLite en su plan gratuito, sujeto a límites. Ese entorno requiere **adaptar** este backend Node a Workers/Durable Objects; los archivos SQLite locales no se ejecutan allí directamente. Render gratuito utiliza un sistema de archivos efímero, por lo que no conserva de forma adecuada estas bases locales entre reinicios. Antes de elegir una plataforma, verifica sus condiciones y límites vigentes: [Cloudflare](https://developers.cloudflare.com/durable-objects/platform/limits/) · [Render](https://render.com/docs/free).
+La elección de una opción gratuita queda para la siguiente etapa: debe comprobarse su compatibilidad con Node y SQLite, la persistencia de los datos y sus límites vigentes. Un servicio que publique solo archivos estáticos no ejecutará este backend. Cualquier cambio de plataforma debe conservar la separación entre empresas, las copias y los controles de suscripción.
 
-Cuando el POS tenga alojamiento HTTPS, la web comercial podrá enlazarlo desde su opción de acceso. Esa integración no debe copiar los datos privados del POS al sitio comercial ni eliminar los controles de suscripción y pertenencia a la empresa.
+## Movimiento y compatibilidad de navegador
+
+`public/motion.js` utiliza la misma clave `raven-motion` y las mismas opciones de la web comercial: Automático (`auto`), Animaciones completas (`full`) y Reducidas (`reduced`). El control está en la pantalla de acceso y en la barra superior del espacio de trabajo. Automático sigue la preferencia del equipo; si esta reduce el movimiento, se ofrece la opción de activar las animaciones. Una selección explícita de animaciones completas se conserva aunque el equipo solicite reducirlas. Si el almacenamiento está bloqueado, la elección sigue funcionando durante la visita.
+
+Las demostraciones incrustadas reciben los cambios de movimiento desde la página comercial sin modificar datos de empresas ni las reglas de acceso. Las cintas, entradas y respuestas de los controles utilizan la preferencia efectiva; reducir movimiento conserva el contenido y la navegación. Al exportar el cliente a la web, el build versiona sus referencias JS/CSS y fuentes para evitar archivos antiguos de caché.
+
+Se comprobó el funcionamiento en Brave 154, Edge 151, Chrome for Testing 151 y Firefox 153. La comparación visual de Control y Planes en la web confirmó el desenfoque en Firefox y Brave, con las capas decorativas excluidas del árbol accesible. Esta corrección modifica la presentación y sus preferencias, sin cambios en el backend.
 
 ## Verificación
 
 La actualización visual de noviembre conserva la identidad de Raven (naranja, ambos temas, cristal con reflejos) y organiza el módulo Ventas según el recorrido observado en la sesión de referencia de SUSII: Mesas, Ventas, Comprobantes y Cotizaciones. El pedido tiene dos columnas, notas por producto y cocina, catálogo en lista/cuadrícula, pagos divididos y cálculo visible de pendientes/vuelto. No implica equivalencia de todas las funciones de SUSII.
 
-Se completaron 22 pruebas del backend. La revisión de navegador se hizo con bases independientes de evaluación: cobro completo con vuelto y ticket, guardado de observaciones, edición de producto con versión, filtros de ambiente y estado. Las pantallas administrativas se revisaron a 375 y 1440 px en claro/oscuro; se corrigieron los nombres accesibles de filtros y la navegación de tablas con teclado. La auditoría automática posterior no detectó infracciones en las vistas corregidas ni en el formulario móvil de pago. La CSP se omitió únicamente en las respuestas del navegador de pruebas para inyectar axe; el servidor conserva su política.
+Se completaron **44 pruebas: 38 de backend y 6 de la demo en memoria**. Las nuevas pruebas de acceso comprueban cuentas inválidas, ausencia de alta pública, revocación de pertenencia, suspensión/vencimiento con una sesión ya iniciada y recuperación manual con cierre de sesiones anteriores. Las pruebas de demo comprueban su aislamiento y las reglas de caja, stock y pago simulados.
 
 ```powershell
 npm test
@@ -209,7 +227,7 @@ Los scripts operativos se comprobaron también en datos temporales: creación, a
 
 ## Recursos
 
-La marca utiliza el cuervo aportado por el propietario. Manrope se sirve localmente; su licencia está en `public/assets/Manrope-OFL.txt`. Las fotografías de productos se heredaron de la web comercial como recursos ilustrativos; no representan inventario o productos reales de un negocio. Esta aplicación no utiliza el logotipo ni los recursos de marca de SUSII.
+La marca utiliza el cuervo aportado por el propietario. Manrope, Space Grotesk e IBM Plex Mono se sirven localmente con sus licencias OFL en `public/assets/`. `public/refinement.css` unifica tamaños, tipografía y contraste entre claro y oscuro. Las fotografías de productos se heredaron de la web comercial como recursos ilustrativos; no representan inventario o productos reales de un negocio. Esta aplicación no utiliza el logotipo ni los recursos de marca de SUSII.
 
 ## Reglas de caja, responsabilidad y stock
 
@@ -218,6 +236,6 @@ La marca utiliza el cuervo aportado por el propietario. Manrope se sirve localme
 - Guardar un pedido abierto descuenta las unidades controladas. Editar aplica solo las diferencias; quitar productos, reducir cantidades o cancelar devuelve unidades. Cobrar no descuenta dos veces; anular devuelve el stock una sola vez.
 - Las cotizaciones no reservan stock; convertirlas en pedido sí lo hace. Los pedidos abiertos anteriores a esta actualización reservan al siguiente guardado o cobro. La migración no altera automáticamente los saldos existentes.
 - Los permisos y el stock se validan en transacciones del servidor. La interfaz informa responsable y consulta los cambios de otras sesiones cada tres segundos mientras está visible, sin reemplazar cambios sin guardar. Una edición que quedó obsoleta necesita actualizarse antes de guardarse.
-- `public/daylight.css` y `public/order-rules.css` añaden el modo claro crema/ámbar, cristal y cintas de luz originales inspiradas en las referencias. Los movimientos se detienen con la preferencia de movimiento reducido.
+- `public/daylight.css` y `public/order-rules.css` añaden el modo claro crema/ámbar, cristal y cintas de luz originales inspiradas en las referencias. Los movimientos siguen la preferencia efectiva del control Movimiento descrito arriba.
 
-Verificación de esta actualización: 33 pruebas de backend aprobadas. Tres sesiones reales del navegador demostraron caja cerrada bloqueada, propiedad del primer mesero, consulta bloqueada para el segundo, edición de administrador y stock actualizado entre sesiones. Pantallas de mesas y pedido revisadas a 375 y 1440 px sin desbordamiento ni infracciones de axe detectadas en el tema claro. El POS permanece local y separado de la web comercial.
+Los datos operativos siguen en este servidor independiente aunque la interfaz se abra desde la web comercial. Las comprobaciones automáticas no certifican seguridad ni aptitud de producción; la revisión visual y las pruebas del alojamiento elegido se realizan por separado.

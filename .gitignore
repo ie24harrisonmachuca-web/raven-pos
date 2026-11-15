@@ -4,3 +4,12 @@ backups/
 test-results/
 .env
 *.sqlite*
+
+.wrangler/
+.cloud/
+.dev.vars
+.dev.vars.*
+
+.mysql-lab/
+mysql/*.private.sql
+

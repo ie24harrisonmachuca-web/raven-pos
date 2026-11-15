@@ -1,0 +1,10 @@
+USE raven_analitica;
+START TRANSACTION;
+INSERT INTO empresas VALUES('qa-a','Empresa de prueba A'),('qa-b','Empresa de prueba B');
+INSERT INTO productos VALUES('qa-a','qa-p','Producto de prueba',10,100);
+INSERT INTO ventas VALUES('qa-a','qa-v1','2026-11-15',200,'paid'),('qa-b','qa-v2','2026-11-15',900,'paid');
+SELECT 'MYSQL01' caso,IF((SELECT total_centimos FROM vista_ventas_diarias WHERE empresa_id='qa-a')=200,'CONFORME','ERROR') resultado;
+CALL consultar_ventas_periodo('qa-a','2026-11-01','2026-11-30');
+ROLLBACK;
+SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='raven_analitica';
+SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='raven_analitica';
